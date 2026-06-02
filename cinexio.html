@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Red Neuronal - Geometría de Disparos (-90° a +90°)</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a2a6c, #b21f1f, #fdbb4d);
+            color: white;
+            text-align: center;
+            padding: 20px;
+            margin: 0;
+            min-height: 100vh;
+        }
+        .container {
+            background: rgba(0,0,0,0.75);
+            border-radius: 20px;
+            padding: 20px;
+            display: inline-block;
+            backdrop-filter: blur(5px);
+            box-shadow: 0 0 30px rgba(0,0,0,0.5);
+        }
+        canvas {
+            border: 3px solid white;
+            border-radius: 10px;
+            background: #fff;
+            margin: 10px;
+            cursor: crosshair;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            margin: 10px;
+            font-size: 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        button:hover {
+            background: #45a049;
+            transform: scale(1.05);
+        }
+        .stats {
+            font-size: 18px;
+            font-weight: bold;
+            margin: 10px;
+        }
+        .red-status {
+            background: #2c3e2c;
+            padding: 10px;
+            border-radius: 10px;
+            margin-top: 10px;
+            font-size: 13px;
+        }
+        .warning {
+            color: #ffaa00;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🧠 Red Neuronal → Geometría de Disparos 🎯</h1>
+    <h3>🔫 Cañón apunta hacia la derecha (-90° abajo, +90° arriba)</h3>
+    
+    <canvas id="gameCanvas" width="700" height="450"></canvas>
+    <br>
+    <div class="stats">
+        🎯 Aciertos: <span id="score">0</span> | 
+        ❌ Fallos: <span id="misses">0</span> | 
+        📊 Precisión: <span id="accuracy">0</span>%
+    </div>
+    
+    <div>
+        <button id="trainBtn">🚀 Entrenar Red Neuronal (1 época)</button>
+        <button id="autoPlayBtn">🤖 Modo Automático (IA juega)</button>
+        <button id="stopAutoBtn">⏹️ Detener IA</button>
+        <button id="resetBtn">🔄 Reiniciar Juego</button>
+    </div>
+    
+    <div class="red-status">
+        <strong>🧬 Red Neuronal (Rango completo: -90° a +90°)</strong><br>
+        Entradas: [distancia_x_normalizada, distancia_y_normalizada] → 2 neuronas<br>
+        Capa oculta: 6 neuronas (ReLU) → Capa salida: 1 neurona (Tanh)<br>
+        📐 <strong>Salida entre -1 y 1 → mapeada a ángulo entre -90° y +90°</strong><br>
+        🎯 La red aprende la relación: <strong>ángulo = atan2(dy, dx)</strong> pero restringido al semicírculo derecho.
+        <div class="warning">
+            ✅ Ángulos positivos = disparar ARRIBA | Ángulos negativos = disparar ABAJO<br>
+            ✅ El cañón NUNCA gira hacia atrás (solo dispara a la derecha)
+        </div>
+    </div>
+</div>
+
+<script>
+    // ==================== RED NEURONAL (Salida entre -1 y 1 con Tanh) ====================
+    class NeuralNetwork {
+        constructor() {
+            // Inicialización
+            this.w1 = this.randomMatrix(2, 6);
+            this.b1 = this.randomMatrix(1, 6);
+            this.w2 = this.randomMatrix(6, 1);
+            this.b2 = this.randomMatrix(1, 1);
+        }
+        
+        randomMatrix(rows, cols) {
+            let m = [];
+            for (let i = 0; i < rows; i++) {
+                m[i] = [];
+                for (let j = 0; j < cols; j++) {
+                    m[i][j] = (Math.random() - 0.5) * Math.sqrt(2 / rows);
+                }
+            }
+            return m;
+        }
+        
+        tanh(x) {
+            return Math.tanh(x);
+        }
+        
+        tanhDerivative(x) {
+            return 1 - x * x;
+        }
+        
+        relu(x) {
+            return Math.max(0, x);
+        }
+        
+        reluDerivative(x) {
+            return x > 0 ? 1 : 0;
+        }
+        
+        forward(input) {
+            // Capa oculta (ReLU)
+            let z1 = [0,0,0,0,0,0];
+            for (let i = 0; i < 6; i++) {
+                let sum = this.b1[0][i];
+                for (let j = 0; j < 2; j++) {
+                    sum += input[j] * this.w1[j][i];
+                }
+                z1[i] = this.relu(sum);
+            }
+            
+            // Capa salida (Tanh)
+            let sumOut = this.b2[0][0];
+            for (let i = 0; i < 6; i++) {
+                sumOut += z1[i] * this.w2[i][0];
+            }
+            let output = this.tanh(sumOut);
+            return { hidden: z1, output: output };
+        }
+        
+        train(input, target) {
+            let { hidden, output } = this.forward(input);
+            
+            let outputError = target - output;
+            let outputDelta = outputError * this.tanhDerivative(output);
+            
+            let hiddenErrors = [0,0,0,0,0,0];
+            for (let i = 0; i < 6; i++) {
+                hiddenErrors[i] = outputDelta * this.w2[i][0];
+            }
+            
+            let hiddenDeltas = [];
+            for (let i = 0; i < 6; i++) {
+                hiddenDeltas.push(hiddenErrors[i] * this.reluDerivative(hidden[i]));
+            }
+            
+            let lr = 0.25;
+            for (let i = 0; i < 6; i++) {
+                this.w2[i][0] += lr * outputDelta * hidden[i];
+            }
+            this.b2[0][0] += lr * outputDelta;
+            
+            for (let i = 0; i < 2; i++) {
+                for (let j = 0; j < 6; j++) {
+                    this.w1[i][j] += lr * hiddenDeltas[j] * input[i];
+                }
+            }
+            for (let j = 0; j < 6; j++) {
+                this.b1[0][j] += lr * hiddenDeltas[j];
+            }
+        }
+        
+        predictAngle(input) {
+            let out = this.forward(input);
+            // out.output está entre -1 y 1, mapeamos a -90° a +90°
+            let angle = out.output * 90;
+            return Math.min(89, Math.max(-89, angle));
+        }
+    }
+    
+    // ==================== CONFIGURACIÓN DEL JUEGO ====================
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    let target = { x: 500, y: 200 };
+    let origin = { x: 100, y: 225 };   // Cañón en el centro vertical
+    
+    let angle = 0;
+    let shot = null;
+    let score = 0;
+    let misses = 0;
+    let autoMode = false;
+    let autoInterval = null;
+    
+    let brain = new NeuralNetwork();
+    
+    // Generar datos de entrenamiento REALES (ángulo correcto = atan2(dy, dx))
+    function generateTrainingData() {
+        let data = [];
+        for (let i = 0; i < 200; i++) {
+            // Distancia horizontal SIEMPRE positiva
+            let dx = 50 + Math.random() * 550;
+            // Distancia vertical puede ser negativa o positiva
+            let dy = (Math.random() - 0.5) * 400;
+            
+            // Ángulo real según geometría
+            let realAngleRad = Math.atan2(dy, dx);
+            let realAngleDeg = realAngleRad * 180 / Math.PI;
+            
+            // Normalizar salida a [-1, 1] para la red
+            let targetValue = realAngleDeg / 90;
+            targetValue = Math.min(0.99, Math.max(-0.99, targetValue));
+            
+            // Normalizar entradas
+            let normX = dx / 600;
+            let normY = (dy + 200) / 400;  // mapear -200..200 a 0..1
+            normX = Math.min(1, Math.max(0, normX));
+            normY = Math.min(1, Math.max(0, normY));
+            
+            data.push({ input: [normX, normY], target: targetValue });
+        }
+        return data;
+    }
+    
+    function trainEpoch() {
+        let data = generateTrainingData();
+        for (let d of data) {
+            brain.train(d.input, d.target);
+        }
+        updateInfoMessage("🧠 Entrenamiento completado! La red aprende ángulos entre -90° y +90°");
+        if (autoMode) makeAIShot();
+    }
+    
+    // Predicción con la red neuronal
+    function getAIAngle() {
+        let dx = target.x - origin.x;
+        let dy = target.y - origin.y;
+        
+        // Si está a la izquierda (nunca debería pasar), apuntar horizontal
+        if (dx < 0) return 0;
+        
+        let normX = dx / 600;
+        let normY = (dy + 200) / 400;
+        normX = Math.min(1, Math.max(0, normX));
+        normY = Math.min(1, Math.max(0, normY));
+        
+        let predictedAngle = brain.predictAngle([normX, normY]);
+        return predictedAngle;
+    }
+    
+    function makeAIShot() {
+        if (!autoMode || shot !== null) return;
+        angle = getAIAngle();
+        shoot();
+    }
+    
+    function shoot() {
+        if (shot !== null) return;
+        
+        let rad = angle * Math.PI / 180;
+        let speed = 6.5;
+        let vx = Math.cos(rad) * speed;
+        let vy = Math.sin(rad) * speed;
+        
+        shot = {
+            x: origin.x,
+            y: origin.y,
+            vx: vx,
+            vy: vy,
+            radius: 6
+        };
+    }
+    
+    function updateGame() {
+        if (shot !== null) {
+            shot.x += shot.vx;
+            shot.y += shot.vy;
+            
+            let dx = shot.x - target.x;
+            let dy = shot.y - target.y;
+            let dist = Math.sqrt(dx*dx + dy*dy);
+            
+            if (dist < 15) {
+                score++;
+                resetShot();
+                relocateTarget();
+                updateStats();
+                if (autoMode) setTimeout(() => makeAIShot(), 200);
+            }
+            else if (shot.x < 0 || shot.x > canvas.width || shot.y < 0 || shot.y > canvas.height) {
+                misses++;
+                updateStats();
+                resetShot();
+                if (autoMode) setTimeout(() => makeAIShot(), 200);
+            }
+        }
+    }
+    
+    function resetShot() {
+        shot = null;
+    }
+    
+    function relocateTarget() {
+        // El objetivo aparece a la derecha (x > origin.x) pero puede estar arriba o abajo
+        target.x = origin.x + 60 + Math.random() * (canvas.width - origin.x - 80);
+        target.y = 40 + Math.random() * (canvas.height - 80);
+    }
+    
+    function updateStats() {
+        document.getElementById('score').innerText = score;
+        document.getElementById('misses').innerText = misses;
+        let total = score + misses;
+        let acc = total === 0 ? 0 : (score / total * 100).toFixed(1);
+        document.getElementById('accuracy').innerText = acc;
+    }
+    
+    function updateInfoMessage(msg) {
+        let infoDiv = document.querySelector('.red-status');
+        let baseContent = infoDiv.innerHTML.split('<div class="warning">')[0];
+        infoDiv.innerHTML = baseContent + `<div style="color:#ffd966; margin-top:8px;">💡 ${msg}</div>` + 
+            '<div class="warning">✅ Ángulos positivos = disparar ARRIBA | Ángulos negativos = disparar ABAJO<br>✅ El cañón NUNCA gira hacia atrás (solo dispara a la derecha)</div>';
+    }
+    
+    // Dibujar todo
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Fondo
+        ctx.fillStyle = "#f0f0f0";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Cuadrícula
+        ctx.strokeStyle = "#cccccc";
+        ctx.lineWidth = 0.5;
+        for (let i = 0; i < canvas.width; i += 50) {
+            ctx.beginPath();
+            ctx.moveTo(i, 0);
+            ctx.lineTo(i, canvas.height);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(0, i);
+            ctx.lineTo(canvas.width, i);
+            ctx.stroke();
+        }
+        
+        // Línea horizontal de referencia
+        ctx.beginPath();
+        ctx.moveTo(0, origin.y);
+        ctx.lineTo(canvas.width, origin.y);
+        ctx.strokeStyle = "#ff9999";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        
+        // Cañón
+        ctx.fillStyle = "#2c3e50";
+        ctx.beginPath();
+        ctx.arc(origin.x, origin.y, 15, 0, 2*Math.PI);
+        ctx.fill();
+        ctx.fillStyle = "#f39c12";
+        ctx.beginPath();
+        ctx.arc(origin.x, origin.y, 8, 0, 2*Math.PI);
+        ctx.fill();
+        
+        // Línea de mira
+        let rad = angle * Math.PI / 180;
+        let lineEndX = origin.x + Math.cos(rad) * 80;
+        let lineEndY = origin.y + Math.sin(rad) * 80;
+        ctx.beginPath();
+        ctx.moveTo(origin.x, origin.y);
+        ctx.lineTo(lineEndX, lineEndY);
+        ctx.strokeStyle = "#e74c3c";
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        
+        // Objetivo
+        ctx.fillStyle = "#e74c3c";
+        ctx.beginPath();
+        ctx.arc(target.x, target.y, 14, 0, 2*Math.PI);
+        ctx.fill();
+        ctx.fillStyle = "white";
+        ctx.beginPath();
+        ctx.arc(target.x, target.y, 8, 0, 2*Math.PI);
+        ctx.fill();
+        ctx.fillStyle = "#e74c3c";
+        ctx.beginPath();
+        ctx.arc(target.x, target.y, 4, 0, 2*Math.PI);
+        ctx.fill();
+        
+        // Proyectil
+        if (shot !== null) {
+            ctx.fillStyle = "#2ecc71";
+            ctx.beginPath();
+            ctx.arc(shot.x, shot.y, shot.radius, 0, 2*Math.PI);
+            ctx.fill();
+            ctx.fillStyle = "#27ae60";
+            ctx.beginPath();
+            ctx.arc(shot.x, shot.y, 3, 0, 2*Math.PI);
+            ctx.fill();
+        }
+        
+        // Mostrar ángulo
+        ctx.font = "bold 16px Arial";
+        ctx.fillStyle = "#2c3e50";
+        let angleDisplay = angle.toFixed(1);
+        let direction = angle > 0 ? "↑" : (angle < 0 ? "↓" : "→");
+        ctx.fillText(`Ángulo: ${angleDisplay}° ${direction}`, origin.x - 20, origin.y - 25);
+        
+        // Indicador de rango válido (semicírculo derecho)
+        ctx.beginPath();
+        ctx.arc(origin.x, origin.y, 60, -Math.PI/2, Math.PI/2);
+        ctx.strokeStyle = "#27ae60";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = "rgba(39,174,96,0.05)";
+        ctx.fill();
+    }
+    
+    // Control manual del ángulo (rango completo -90 a 90)
+    function handleMouseMove(e) {
+        if (autoMode) return;
+        const rect = canvas.getBoundingClientRect();
+        let mouseX = e.clientX - rect.left;
+        let mouseY = e.clientY - rect.top;
+        
+        let dx = mouseX - origin.x;
+        let dy = mouseY - origin.y;
+        
+        if (dx < 0) dx = 0.1;
+        
+        let ang = Math.atan2(dy, dx) * 180 / Math.PI;
+        ang = Math.min(89, Math.max(-89, ang));
+        angle = ang;
+    }
+    
+    function handleClick(e) {
+        if (autoMode) return;
+        shoot();
+    }
+    
+    // Eventos
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('click', handleClick);
+    
+    document.getElementById('trainBtn').addEventListener('click', () => {
+        trainEpoch();
+    });
+    
+    document.getElementById('autoPlayBtn').addEventListener('click', () => {
+        if (autoMode) return;
+        autoMode = true;
+        updateInfoMessage("🤖 IA ACTIVADA - Prediciendo ángulo óptimo con la red neuronal");
+        makeAIShot();
+        autoInterval = setInterval(() => {
+            if (autoMode && shot === null) {
+                makeAIShot();
+            }
+        }, 350);
+    });
+    
+    document.getElementById('stopAutoBtn').addEventListener('click', () => {
+        autoMode = false;
+        if (autoInterval) clearInterval(autoInterval);
+        updateInfoMessage("⏸️ MODO MANUAL - Mueve el mouse para apuntar (arriba/abajo)");
+        resetShot();
+    });
+    
+    document.getElementById('resetBtn').addEventListener('click', () => {
+        score = 0;
+        misses = 0;
+        updateStats();
+        relocateTarget();
+        resetShot();
+        if (autoMode) {
+            autoMode = false;
+            if (autoInterval) clearInterval(autoInterval);
+        }
+        angle = 0;
+        updateInfoMessage("🔄 Juego reiniciado");
+    });
+    
+    // Entrenamiento inicial
+    relocateTarget();
+    for (let i = 0; i < 100; i++) {
+        let data = generateTrainingData();
+        for (let d of data) brain.train(d.input, d.target);
+    }
+    updateInfoMessage("🎮 Juego listo! Red pre-entrenada. Mueve el mouse para apuntar (↑↓)");
+    
+    function gameLoop() {
+        updateGame();
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+    gameLoop();
+</script>
+</body>
+</html>
